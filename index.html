@@ -1,1 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GCSE Rotations — Random Shapes (Given Pivot, Smooth Pivot Tool)</title>
+<style>
+  /* ===== Black & White, single screen, clean ===== */
+  :root{
+    --bg:#ffffff;
+    --ink:#000000;
+    --grid:#dddddd;
+    --axis:#000000;
+    --ghost:#999999;
+    --error:#e83333;
+  }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Noto Sans",sans-serif; }
+  #app { height:100vh; display:grid; grid-template-rows:auto 1fr auto; gap:6px; padding:8px; box-sizing:border-box; overflow:hidden; }
 
+  /* Header */
+  .bar{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    border:1px solid #000; padding:6px 8px; border-radius:8px; background:#fff; min-height:44px;
+  }
+  .prompt{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-weight:700 }
+  .hud{ display:flex; align-items:center; gap:12px; flex-wrap:wrap }
+  .hud .pill{ border:1px solid #000; border-radius:999px; padding:4px 10px; font-weight:700 }
+  .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  button{
+    appearance:none; background:#fff; color:#000; border:1px solid #000; border-radius:6px; padding:6px 10px; font-weight:700; cursor:pointer;
+  }
+  button:disabled{ opacity:.6; cursor:not-allowed }
+  button:focus-visible, input:focus-visible{ outline:2px solid #000; outline-offset:1px }
+
+  /* Draggable pivot token in top bar (tool only) */
+  .pivotLabel{ font-weight:700 }
+  .token{
+    width:16px; height:16px; border-radius:50%; background:#000; display:inline-block;
+    cursor:grab; user-select:none; margin-left:6px;
+  }
+  .token.dragging{ cursor:grabbing; }
+  .tokenGhost{
+    position:fixed; width:16px; height:16px; border-radius:50%;
+    background:#000; pointer-events:none; z-index:50;
+    transform:translate(-50%, -50%);
+  }
+
+  /* Canvas area */
+  .stageWrap{
+    position:relative; display:grid; place-items:center; border:1px solid #000; border-radius:8px; background:#fff;
+    min-height:0;
+  }
+  #gridCanvas{
+    display:block; max-width:100%; max-height:100%; touch-action:none;
+  }
+  /* Confetti + big message overlays */
+  #confettiCanvas{
+    position:absolute; inset:0; width:100%; height:100%; pointer-events:none; display:none;
+  }
+  #bigMsg{
+    position:absolute; inset:0; display:none; align-items:center; justify-content:center; pointer-events:none;
+    font-weight:900; font-size:min(12vw, 64px); letter-spacing:1px; color:#000; text-shadow:0 0 0 #000;
+    background:rgba(255,255,255,0.0);
+  }
+
+  /* Bottom answer area */
+  .answerBar{
+    border:1px solid #000; border-radius:8px; padding:8px; display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; background:#fff;
+    min-height:60px;
+  }
+  .answerBar .hint{ font-size:12px; margin-bottom:6px }
+  .answerGrid{ display:grid; gap:6px; }
+  .row{ display:flex; align-items:center; gap:6px; border:1px solid #000; border-radius:6px; padding:6px }
+  .row label{ min-width:1.5em; text-align:right; font-weight:700 }
+  .row input{
+    width:100%; padding:6px 8px; border:1px solid #000; border-radius:4px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  .actions{ display:flex; gap:6px; flex-wrap:wrap; align-items:center }
+  .msg{ font-weight:700; padding:6px 8px; border-radius:6px; border:1px solid #000; display:none; }
+
+  /* Error highlight + screen shake */
+  .answerBar.error{ border-color:var(--error); box-shadow:0 0 0 3px var(--error) inset; }
+  @keyframes shake {
+    0%{ transform:translateX(0); }
+    20%{ transform:translateX(-6px); }
+    40%{ transform:translateX(6px); }
+    60%{ transform:translateX(-4px); }
+    80%{ transform:translateX(4px); }
+    100%{ transform:translateX(0); }
+  }
+  .shake{ animation:shake .45s ease; }
+
+  /* Menu overlay */
+  .overlay{
+    position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; padding:16px; z-index:20;
+    border:6px solid #000;
+  }
+  .panel{
+    width:min(900px, 96vw); border:2px solid #000; border-radius:10px; padding:14px; display:grid; gap:12px; background:#fff;
+  }
+  .panel h1{ margin:0; font-size:20px }
+  .opts{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  .card{ border:1px solid #000; border-radius:10px; padding:12px; display:grid; gap:10px }
+  .radio{ display:flex; gap:8px; align-items:center; font-weight:700 }
+  .field{ display:flex; gap:8px; align-items:center; }
+  .field input[type="number"]{ width:120px; padding:6px 8px; border:1px solid #000; border-radius:6px; }
+  .pills{ display:flex; gap:6px; flex-wrap:wrap }
+  .pillBtn{ padding:6px 10px; border:1px solid #000; border-radius:999px; background:#fff; cursor:pointer; font-weight:700 }
+  .pillBtn.sel{ background:#000; color:#fff }
+  .pills.disabled .pillBtn{ opacity:0.35; pointer-events:none; }
+  .panel .footer{ display:flex; justify-content:flex-end; gap:8px }
+  .sm{ font-size:12px; color:#000 }
+
+  /* Responsive: keep single screen */
+  @media (max-width: 900px){
+    .answerBar{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Top bar -->
+  <div class="bar">
+    <div class="prompt">
+      <span>Rotate the shape</span>
+      <span id="angleText"></span>
+      <span>about</span>
+      <span id="pivotTargetText"></span>
+      <span class="pivotLabel">Rotation point</span>
+      <span id="pivotToken" class="token" title="Drag this dot into the grid to place a rotation point (tool only)"></span>
+    </div>
+    <div class="hud">
+      <span class="pill" id="hudScore">Score: 0</span>
+      <span class="pill" id="hudGoal" style="display:none;">Goal: 10</span>
+      <span class="pill" id="hudTime" style="display:none;">Time: 05:00</span>
+    </div>
+    <div class="controls">
+      <button id="resetBtn" title="Reset rotation angle to start">Reset Angle</button>
+      <button id="resetPointBtn" title="Remove the rotation point so you can place it again">Reset Rotation Point</button>
+      <button id="menuBtn" title="Back to menu">Menu</button>
+    </div>
+  </div>
+
+  <!-- Canvas stage -->
+  <div class="stageWrap" id="stage">
+    <canvas id="gridCanvas"></canvas>
+    <canvas id="confettiCanvas"></canvas>
+    <div id="bigMsg">CORRECT!</div>
+  </div>
+
+  <!-- Bottom answer panel -->
+  <div class="answerBar" id="answerBar">
+    <div>
+      <div class="hint">Enter the coordinates of the rotated shape like <span style="font-family:ui-monospace,monospace;">(x, y)</span> — any vertex order is fine.</div>
+      <div id="inputs" class="answerGrid"></div>
+    </div>
+    <div class="actions">
+      <button id="checkBtn">Check</button>
+      <button id="skipBtn" title="Skip this question">Skip</button>
+      <button id="nextBtn" style="display:none;">Next question</button>
+      <span id="feedback" class="msg"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay menu -->
+<div id="menu" class="overlay" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h1>Choose a game mode</h1>
+    <div class="opts">
+      <div class="card">
+        <label class="radio">
+          <input type="radio" name="mode" value="target" checked />
+          <span>Target score</span>
+        </label>
+        <div class="field">
+          <label for="targetScore"><b>Score to reach:</b></label>
+          <input id="targetScore" type="number" min="5" step="5" value="10" />
+        </div>
+        <div class="sm">Earn +1 point for each correct question.</div>
+      </div>
+      <div class="card">
+        <label class="radio">
+          <input type="radio" name="mode" value="timed" />
+          <span>Timed game</span>
+        </label>
+        <div class="pills disabled" id="timeChoices" aria-disabled="true">
+          <button class="pillBtn" data-min="5">5 min</button>
+          <button class="pillBtn" data-min="10">10 min</button>
+          <button class="pillBtn" data-min="20">20 min</button>
+          <button class="pillBtn" data-min="30">30 min</button>
+          <button class="pillBtn" data-min="0">No limit</button>
+        </div>
+        <div class="sm">Rotate correctly as many times as you can before time runs out (or choose no limit).</div>
+      </div>
+    </div>
+    <div class="footer">
+      <button id="startBtn">Start game</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ===== State =====
+  const state = {
+    // gameplay
+    mode: 'target',           // 'target' | 'timed'
+    targetScore: 10,
+    timeLimitSec: 0,          // set when starting
+    timeLeftSec: 0,
+    timerId: null,
+    score: 0,
+    answeredCorrectly: false,
+
+    // geometry
+    original: [],             // [{x,y}, ...] original polygon (integers)
+    requiredPivot: {x:0, y:0},// integer pivot used for marking (given in the prompt)
+    // tool pivot (student can place anywhere; not graded)
+    pivot: {x:0, y:0},
+    pivotPlaced: false,
+    pivotDragAnchor: null,    // freeze render during pivot drag so shape doesn't translate visually
+    currentAngle: 0,          // live preview angle (degrees, smooth)
+
+    // rotation target (equal mix)
+    targetDeg: 90,            // 90 | 180 | 270
+    targetDir: 'cw',          // 'cw' | 'ccw' | 'none' (for 180)
+    targetSweep: -90,         // signed sweep (cw negative)
+
+    // drag state
+    dragging: false,
+    dragType: null,           // 'pivot' | 'rotate' | null
+    dragStartAngle: 0,
+    dragStartPointerAngle: 0,
+
+    // equal-mix scheduler
+    typeSeq: [],
+    typeIdx: 0,
+  };
+
+  // ===== Elements =====
+  const app = document.getElementById('app');
+  const canvas = document.getElementById('gridCanvas');
+  const stage = document.getElementById('stage');
+  const confettiCanvas = document.getElementById('confettiCanvas');
+  const bigMsg = document.getElementById('bigMsg');
+  const resetBtn = document.getElementById('resetBtn');
+  const resetPointBtn = document.getElementById('resetPointBtn');
+  const menuBtn = document.getElementById('menuBtn');
+  const inputsDiv = document.getElementById('inputs');
+  const checkBtn = document.getElementById('checkBtn');
+  const skipBtn = document.getElementById('skipBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const feedback = document.getElementById('feedback');
+  const hudScore = document.getElementById('hudScore');
+  const hudGoal = document.getElementById('hudGoal');
+  const hudTime = document.getElementById('hudTime');
+  const answerBar = document.getElementById('answerBar');
+  const angleText = document.getElementById('angleText');
+  const pivotTargetText = document.getElementById('pivotTargetText');
+  const pivotToken = document.getElementById('pivotToken');
+
+  const menu = document.getElementById('menu');
+  const startBtn = document.getElementById('startBtn');
+  const timeChoices = document.getElementById('timeChoices');
+  const targetScoreInput = document.getElementById('targetScore');
+  const modeRadios = [...document.querySelectorAll('input[name="mode"]')];
+
+  // ===== Layout & drawing helpers =====
+  const GRID_MIN = -10, GRID_MAX = 10;
+  const PAD = 36; // padding for labels
+  let scale = 1;
+  let sizePx = 0;
+
+  function resizeCanvasToFit(){
+    const stageBox = canvas.parentElement;
+    const availW = stageBox.clientWidth - 2;
+    const availH = stageBox.clientHeight - 2;
+    sizePx = Math.max(220, Math.min(availW, availH));
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = sizePx + 'px';
+    canvas.style.height = sizePx + 'px';
+    canvas.width = Math.floor(sizePx * dpr);
+    canvas.height = Math.floor(sizePx * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+
+    confettiCanvas.style.width = sizePx + 'px';
+    confettiCanvas.style.height = sizePx + 'px';
+    confettiCanvas.width = Math.floor(sizePx * dpr);
+    confettiCanvas.height = Math.floor(sizePx * dpr);
+    const cctx = confettiCanvas.getContext('2d');
+    cctx.setTransform(dpr,0,0,dpr,0,0);
+
+    scale = (sizePx - 2*PAD) / (GRID_MAX - GRID_MIN);
+    draw();
+  }
+
+  function gxToPx(x){ return PAD + (x - GRID_MIN) * scale; }
+  function gyToPx(y){ return PAD + (GRID_MAX - y) * scale; }
+  function pxToGx(px){ return GRID_MIN + (px - PAD)/scale; }
+  function pxToGy(py){ return GRID_MAX - (py - PAD)/scale; }
+
+  function drawGrid(ctx){
+    ctx.clearRect(0,0,sizePx,sizePx);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,sizePx,sizePx);
+
+    // grid lines
+    ctx.lineWidth = 1; ctx.strokeStyle = '#ddd';
+    ctx.beginPath();
+    for(let i=GRID_MIN;i<=GRID_MAX;i++){
+      const vx = gxToPx(i);
+      ctx.moveTo(vx, gyToPx(GRID_MIN));
+      ctx.lineTo(vx, gyToPx(GRID_MAX));
+      const hy = gyToPx(i);
+      ctx.moveTo(gxToPx(GRID_MIN), hy);
+      ctx.lineTo(gxToPx(GRID_MAX), hy);
+    }
+    ctx.stroke();
+
+    // axes
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(gxToPx(GRID_MIN), gyToPx(0));
+    ctx.lineTo(gxToPx(GRID_MAX), gyToPx(0));
+    ctx.moveTo(gxToPx(0), gyToPx(GRID_MIN));
+    ctx.lineTo(gxToPx(0), gyToPx(GRID_MAX));
+    ctx.stroke();
+
+    // labels (single "0" near origin; others exclude 0)
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+
+    // x labels except 0
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for(let i=GRID_MIN;i<=GRID_MAX;i++){
+      if(i===0) continue;
+      ctx.fillText(String(i), gxToPx(i), gyToPx(0) + 4);
+    }
+    // y labels except 0
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for(let i=GRID_MIN;i<=GRID_MAX;i++){
+      if(i===0) continue;
+      ctx.fillText(String(i), gxToPx(0) - 6, gyToPx(i));
+    }
+    // single zero close to origin
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('0', gxToPx(0)+4, gyToPx(0)+2);
+  }
+
+  function drawPolygon(ctx, pts, {fill=true, stroke=true, dashed=false, shade=false}={}){
+    if(!pts.length) return;
+    ctx.save();
+    if(dashed) ctx.setLineDash([6,6]);
+    ctx.beginPath();
+    ctx.moveTo(gxToPx(pts[0].x), gyToPx(pts[0].y));
+    for(let i=1;i<pts.length;i++){
+      ctx.lineTo(gxToPx(pts[i].x), gyToPx(pts[i].y));
+    }
+    ctx.closePath();
+    if(fill){
+      ctx.fillStyle = shade ? 'rgba(0,0,0,0.10)' : '#fff';
+      ctx.fill();
+    }
+    if(stroke){
+      ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawGhost(ctx, pts){
+    ctx.save();
+    ctx.setLineDash([6,6]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#999';
+    ctx.beginPath();
+    ctx.moveTo(gxToPx(pts[0].x), gyToPx(pts[0].y));
+    for(let i=1;i<pts.length;i++){
+      ctx.lineTo(gxToPx(pts[i].x), gyToPx(pts[i].y));
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPivot(ctx, p){
+    const r = Math.max(5, scale*0.18);
+    ctx.save();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(gxToPx(p.x), gyToPx(p.y), r, 0, Math.PI*2); ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#000';
+    ctx.beginPath();
+    ctx.moveTo(gxToPx(p.x)-r*1.1, gyToPx(p.y)); ctx.lineTo(gxToPx(p.x)+r*1.1, gyToPx(p.y));
+    ctx.moveTo(gxToPx(p.x), gyToPx(p.y)-r*1.1); ctx.lineTo(gxToPx(p.x), gyToPx(p.y)+r*1.1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawDots(ctx, pts, large=false){
+    const r = large ? Math.max(4, scale*0.16) : Math.max(3, scale*0.12);
+    ctx.save();
+    ctx.fillStyle = '#000';
+    for(const p of pts){
+      ctx.beginPath();
+      ctx.arc(gxToPx(p.x), gyToPx(p.y), r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function draw(){
+    const ctx = canvas.getContext('2d');
+    drawGrid(ctx);
+
+    if(state.original.length){
+      drawGhost(ctx, state.original); // original polygon (ghost)
+      // While dragging the pivot, freeze shape rendering around the anchor (so the shape stays put)
+      const renderPivot = (state.pivotDragAnchor != null) ? state.pivotDragAnchor : (state.pivotPlaced ? state.pivot : {x:0,y:0});
+      const angForPreview = state.pivotPlaced ? state.currentAngle : 0;
+      const activePts = rotatePolygonAny(state.original, renderPivot, angForPreview);
+      drawPolygon(ctx, activePts, {fill:true, stroke:true, shade:true});
+    }
+
+    // Draw tool pivot if placed (tool only; not graded)
+    if(state.pivotPlaced) drawPivot(ctx, state.pivot);
+
+    // live preview of typed points
+    const typedForDraw = peekInputs();
+    if(typedForDraw.length){
+      drawDots(ctx, typedForDraw, false);
+    }
+    if(state.answeredCorrectly){
+      drawDots(ctx, expectedPts(), true);
+    }
+  }
+
+  // ===== Geometry =====
+  function rotatePointAny(p, c, angleDeg){
+    const rad = angleDeg * Math.PI/180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const dx = p.x - c.x, dy = p.y - c.y;
+    return { x: c.x + dx*cos - dy*sin, y: c.y + dx*sin + dy*cos };
+  }
+  function rotatePolygonAny(pts, c, angleDeg){
+    return pts.map(p => rotatePointAny(p, c, angleDeg));
+  }
+  function inBounds(pts){
+    return pts.every(p => p.x>=GRID_MIN && p.x<=GRID_MAX && p.y>=GRID_MIN && p.y<=GRID_MAX);
+  }
+
+  // ===== Overlap utils (convex polygons only — our shapes are convex) =====
+  function polyAreaSigned(poly){
+    let s=0; for(let i=0;i<poly.length;i++){
+      const p=poly[i], q=poly[(i+1)%poly.length];
+      s += p.x*q.y - q.x*p.y;
+    }
+    return s/2;
+  }
+  function ensureCCW(poly){
+    return polyAreaSigned(poly) >= 0 ? poly.slice() : poly.slice().reverse();
+  }
+  function cross(ax,ay,bx,by){ return ax*by - ay*bx; }
+  function isLeft(A,B,P){
+    return cross(B.x-A.x,B.y-A.y, P.x-A.x,P.y-A.y) >= -1e-9;
+  }
+  function lineIntersection(A,B,P,Q){
+    const r = {x:B.x-A.x, y:B.y-A.y};
+    const s = {x:Q.x-P.x, y:Q.y-P.y};
+    const denom = cross(r.x,r.y, s.x,s.y);
+    if(Math.abs(denom) < 1e-12){ return {x:(P.x+Q.x)/2, y:(P.y+Q.y)/2}; }
+    const t = cross(P.x-A.x,P.y-A.y, s.x,s.y) / denom;
+    return { x: A.x + t*r.x, y: A.y + t*r.y };
+  }
+  function intersectConvexPolys(A,B){
+    let clip = ensureCCW(A);
+    let output = B.slice();
+    for(let i=0;i<clip.length;i++){
+      const A1 = clip[i], A2 = clip[(i+1)%clip.length];
+      const input = output.slice();
+      output = [];
+      if(input.length===0) break;
+      for(let j=0;j<input.length;j++){
+        const P = input[j], Q = input[(j+1)%input.length];
+        const inP = isLeft(A1,A2,P);
+        const inQ = isLeft(A1,A2,Q);
+        if(inP && inQ){
+          output.push(Q);
+        }else if(inP && !inQ){
+          output.push(lineIntersection(A1,A2,P,Q));
+        }else if(!inP && inQ){
+          output.push(lineIntersection(A1,A2,P,Q)); output.push(Q);
+        }
+      }
+    }
+    return output;
+  }
+  function area(poly){ return Math.abs(polyAreaSigned(poly)); }
+  function overlapAreaRatio(A, B){
+    const inter = intersectConvexPolys(A,B);
+    if(inter.length < 3) return 0;
+    const ai = area(inter);
+    const aA = area(A)||1;
+    return ai / aA;
+  }
+
+  // ===== Misc utils =====
+  function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+  function choice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+  function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
+  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy; }
+  function dot(ax,ay,bx,by){ return ax*bx + ay*by; }
+
+  // Point inside polygon (ray casting)
+  function pointInPoly(pt, poly){
+    let c=false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+      const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+      const intersect = ((yi>pt.y)!==(yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi) + xi);
+      if(intersect) c=!c;
+    }
+    return c;
+  }
+  // Is point exactly on any edge (within tiny tolerance)?
+  function onEdge(p, poly){
+    const eps = 1e-9;
+    for(let i=0;i<poly.length;i++){
+      const a=poly[i], b=poly[(i+1)%poly.length];
+      const abx=b.x-a.x, aby=b.y-a.y;
+      const apx=p.x-a.x, apy=p.y-a.y;
+      const crossv = Math.abs(cross(abx,aby, apx,apy));
+      if(crossv>eps) continue;
+      const t = dot(apx,apy, abx,aby) / (abx*abx + aby*aby);
+      if(t>-eps && t<1+eps) return true;
+    }
+    return false;
+  }
+  function minVertexDist2(p, poly){
+    let m=Infinity;
+    for(const v of poly){ const d=dist2(p,v); if(d<m) m=d; }
+    return m;
+  }
+
+  // ===== Shape generation (square, rectangle, right triangle, isosceles triangle) =====
+  function genRectangle(isSquare=false){
+    const w = isSquare ? choice([2,3,4,5]) : choice([2,3,4,5,6]);
+    const h = isSquare ? w : choice([2,3,4,5,6].filter(x=>x!==w || w<=5));
+    const minX = GRID_MIN+1, maxX = GRID_MAX-1, minY = GRID_MIN+1, maxY = GRID_MAX-1;
+    const x0 = randInt(minX, maxX - w);
+    const y0 = randInt(minY, maxY - h);
+    const A = {x:x0,   y:y0};
+    const B = {x:x0+w, y:y0};
+    const C = {x:x0+w, y:y0+h};
+    const D = {x:x0,   y:y0+h};
+    return [A,B,C,D];
+  }
+
+  function genRightTriangle(){
+    const w = choice([2,3,4,5]);
+    const h = choice([2,3,4,5]);
+    const ax = randInt(GRID_MIN, GRID_MAX - w);
+    const ay = randInt(GRID_MIN, GRID_MAX - h);
+    const A = {x:ax, y:ay};
+    const B = {x:ax+w, y:ay};
+    const C = {x:ax, y:ay+h};
+    return [A,B,C];
+  }
+
+  function genIsoscelesTriangle(){
+    const k = choice([1,2,3,4,5]);     // half base length
+    const h = choice([2,3,4,5,6]);     // height
+    const up = Math.random() < 0.5 ? 1 : -1;
+    const cx = randInt(GRID_MIN + k, GRID_MAX - k);
+    const yBaseMin = (up===1) ? GRID_MIN : GRID_MIN + h;
+    const yBaseMax = (up===1) ? GRID_MAX - h : GRID_MAX;
+    const y0 = randInt(yBaseMin, yBaseMax);
+    const A = {x:cx-k, y:y0};
+    const B = {x:cx+k, y:y0};
+    const C = {x:cx,   y:y0 + up*h};
+    return [A,B,C];
+  }
+
+  function randomShape(){
+    const type = choice(['square','rectangle','right','iso']);
+    if(type==='square') return genRectangle(true);
+    if(type==='rectangle') return genRectangle(false);
+    if(type==='right') return genRightTriangle();
+    return genIsoscelesTriangle();
+  }
+
+  // ===== Equal-mix scheduler (90 cw, 90 ccw, 180, 270 cw, 270 ccw) =====
+  function initTypeSequence(){
+    state.typeSeq = shuffle([
+      {deg:90,  dir:'cw'},
+      {deg:90,  dir:'ccw'},
+      {deg:180, dir:'none'},
+      {deg:270, dir:'cw'},
+      {deg:270, dir:'ccw'}
+    ]);
+    state.typeIdx = 0;
+  }
+  function nextType(){
+    if(state.typeIdx >= state.typeSeq.length){ initTypeSequence(); }
+    return state.typeSeq[state.typeIdx++];
+  }
+
+  // ===== Target text =====
+  function setTargetAngle(deg, dir){
+    state.targetDeg = deg;
+    state.targetDir = dir;
+    state.targetSweep = (dir==='cw') ? -deg : (dir==='ccw' ? deg : 180);
+    const text = dir==='none' ? `${deg}°` : `${deg}° ${dir==='cw'?'clockwise':'counterclockwise'}`;
+    angleText.textContent = text;
+  }
+
+  // ===== Pivot (GIVEN, used for marking) selection rules =====
+  // For 270°: keep strict — ensure the whole sweep stays within bounds.
+  // For 90°/180°: only require the FINAL rotated shape is in-bounds; allow mid-rotation to cross boundary.
+  // Also: limit pivots that sit on/inside the shape; prefer outside and sometimes farther away.
+  function shapeCentroid(pts){
+    const sx = pts.reduce((s,p)=>s+p.x,0)/pts.length;
+    const sy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+    return {x:sx,y:sy};
+  }
+
+  function pickRequiredPivot(){
+    const cand = [];
+    const cen = shapeCentroid(state.original);
+
+    for(let x=GRID_MIN; x<=GRID_MAX; x++){
+      for(let y=GRID_MIN; y<=GRID_MAX; y++){
+        const pv = {x,y};
+
+        // FINAL position must be fully inside bounds
+        const finalPts = rotatePolygonAny(state.original, pv, state.targetSweep);
+        if(!inBounds(finalPts)) continue;
+
+        // For 270° keep the stricter rule: full sweep in bounds (to guarantee feasibility)
+        if(state.targetDeg===270){
+          if(!fullSweepInBounds(state.original, pv, state.targetSweep)) continue;
+        }
+
+        const ratio = overlapAreaRatio(state.original, finalPts);
+        const inside = pointInPoly(pv, state.original);
+        const edge   = onEdge(pv, state.original);
+        const vDist2 = minVertexDist2(pv, state.original); // avoid corners if small
+        const d2 = dist2(pv, cen);
+
+        cand.push({pv, ratio, inside, edge, vDist2, d2});
+      }
+    }
+    if(!cand.length) return false;
+
+    // Build preference buckets
+    const farThresh2 = 16; // >=4 units from any vertex counts as "not on corner"
+    const LOW=0.06, MID=0.22;
+
+    // Helper sorters
+    const byFar = (a,b)=> (b.d2 - a.d2) || (a.ratio - b.ratio);   // prefer further then lower overlap
+    const byLowOverlapNear = (a,b)=> (a.ratio - b.ratio) || (a.d2 - b.d2);
+
+    let list;
+    if(state.targetDeg===270){
+      // Keep the previous behaviour that worked: moderate overlap is OK, prefer outside.
+      const outside = cand.filter(c=>!c.inside && !c.edge)
+                          .sort((a,b)=> (Math.abs(a.ratio-0.18)-Math.abs(b.ratio-0.18)) || (a.d2-b.d2));
+      const backup = cand.filter(c=>!c.edge).sort((a,b)=>a.ratio-b.ratio || a.d2-b.d2);
+      list = outside.length ? outside : backup;
+    }else{
+      // 90° / 180°: prefer pivots OUTSIDE, not on edge/corner, and often further away.
+      const outsideCleanFar = cand.filter(c=>!c.inside && !c.edge && c.vDist2>=farThresh2);
+      const outsideCleanNear= cand.filter(c=>!c.inside && !c.edge && c.vDist2<farThresh2);
+      const outsideEdge     = cand.filter(c=>!c.inside && c.edge);
+      const insideClean     = cand.filter(c=> c.inside && !c.edge);
+
+      // Weighting: 70% far, 20% near, 7% on edge, 3% inside (variety)
+      const r=Math.random();
+      if(r<0.70 && outsideCleanFar.length){ list = outsideCleanFar.sort(byFar); }
+      else if(r<0.90 && outsideCleanNear.length){ list = outsideCleanNear.sort(byLowOverlapNear); }
+      else if(r<0.97 && outsideEdge.length){ list = outsideEdge.sort(byLowOverlapNear); }
+      else if(insideClean.length){ list = insideClean.sort(byLowOverlapNear); }
+      else { list = cand.sort(byLowOverlapNear); }
+      // Additionally, de-emphasise very high overlaps for 90/180:
+      list = list.filter(c=>c.ratio <= 0.35);
+      if(!list.length) list = cand.sort(byLowOverlapNear);
+    }
+
+    state.requiredPivot = list[0].pv;
+    return true;
+  }
+
+  function fullSweepInBounds(pts, pivot, sweepDeg){
+    // sample along the sweep; ensure all sampled frames are in bounds
+    const steps = Math.max(6, Math.ceil(Math.abs(sweepDeg)/5)); // ~5° steps
+    const sgn = Math.sign(sweepDeg) || 1;
+    for(let i=0;i<=steps;i++){
+      const a = (i/steps) * Math.abs(sweepDeg) * sgn;
+      if(!inBounds(rotatePolygonAny(pts, pivot, a))) return false;
+    }
+    return true;
+  }
+
+  // ===== Inputs & checking (dynamic boxes; "(x, y)" format) =====
+  function buildInputs(n){
+    inputsDiv.innerHTML = '';
+    inputsDiv.style.gridTemplateColumns = `repeat(${Math.min(n,4)}, minmax(0, 1fr))`;
+    for(let i=0;i<n;i++){
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lab = document.createElement('label'); lab.textContent = (i+1)+'.';
+      const box = document.createElement('input');
+      box.type = 'text';
+      box.inputMode = 'decimal';
+      box.placeholder = '(x, y)';
+      box.autocomplete = 'off';
+      box.spellcheck = false;
+      box.addEventListener('input', () => draw()); // live dots
+      row.append(lab, box);
+      inputsDiv.appendChild(row);
+    }
+  }
+
+  function parseCoord(str){
+    if(!str) return null;
+    let s = String(str).trim();
+    s = s.replace(/[\(\)\[\]\{\}]/g,''); // strip any brackets
+    const parts = s.split(',');
+    if(parts.length !== 2) return null;
+    const xs = parts[0].trim();
+    const ys = parts[1].trim();
+    if(xs===''||ys==='') return null;
+    const x = Number(xs), y = Number(ys);
+    if(!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return {x,y};
+  }
+
+  function peekInputs(){
+    const boxes = [...inputsDiv.querySelectorAll('input')];
+    const pts = [];
+    for(const b of boxes){
+      const p = parseCoord(b.value);
+      if(p){ pts.push(p); }
+    }
+    return pts;
+  }
+
+  function readInputsAllOrNull(expectedCount){
+    const boxes = [...inputsDiv.querySelectorAll('input')];
+    if(boxes.length !== expectedCount) return null;
+    const pts = [];
+    for(const b of boxes){
+      const p = parseCoord(b.value);
+      if(!p) return null;
+      pts.push(p);
+    }
+    // distinct points within a small tolerance
+    const key = (p)=>`${Math.round(p.x*1000)},${Math.round(p.y*1000)}`;
+    const uniq = new Set(pts.map(key));
+    if(uniq.size !== pts.length) return null;
+    return pts;
+  }
+
+  function expectedPts(){
+    // Marking uses the GIVEN pivot from the prompt
+    return rotatePolygonAny(state.original, state.requiredPivot, state.targetSweep);
+  }
+
+  // ===== Dragging (pivot tool & rotation) =====
+  function startDrag(ev){
+    if(state.answeredCorrectly) return;
+    const rect = canvas.getBoundingClientRect();
+    const client = ev.touches ? ev.touches[0] : ev;
+    const cx = client.clientX - rect.left;
+    const cy = client.clientY - rect.top;
+    const g = {x:pxToGx(cx), y:pxToGy(cy)};
+
+    // pivot move if near pivot
+    if(state.pivotPlaced){
+      const pivotThresh = Math.max(0.45, 12/scale);
+      if(dist2(g, state.pivot) <= pivotThresh*pivotThresh){
+        state.dragging = true; state.dragType = 'pivot';
+        state.pivotDragAnchor = {...state.pivot}; // freeze render
+        ev.preventDefault(); return;
+      }
+    }
+
+    // rotate around tool pivot
+    if(state.pivotPlaced){
+      const activePts = rotatePolygonAny(state.original, state.pivot, state.currentAngle);
+      if(pointInPoly(g, activePts)){
+        state.dragging = true; state.dragType = 'rotate';
+        state.dragStartAngle = state.currentAngle;
+        state.dragStartPointerAngle = Math.atan2(g.y - state.pivot.y, g.x - state.pivot.x)*180/Math.PI;
+        ev.preventDefault(); return;
+      }
+    }
+  }
+
+  function moveDrag(ev){
+    if(!state.dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const client = ev.touches ? ev.touches[0] : ev;
+    const cx = client.clientX - rect.left;
+    const cy = client.clientY - rect.top;
+    const g = {x:pxToGx(cx), y:pxToGy(cy)};
+
+    if(state.dragType === 'pivot'){
+      // Smooth free placement; shape stays visually anchored during the drag
+      state.pivot = {x:g.x, y:g.y};
+      draw();
+    }else if(state.dragType === 'rotate'){
+      const aNow = Math.atan2(g.y - state.pivot.y, g.x - state.pivot.x)*180/Math.PI;
+      let delta = aNow - state.dragStartPointerAngle;
+      delta = ((delta+540)%360)-180; // normalize delta
+      const candidate = state.dragStartAngle + delta;
+      // DO NOT clamp to bounds: allow crossing boundaries during rotation;
+      // only the final (marked) position is constrained by question generation.
+      state.currentAngle = candidate;
+      draw();
+    }
+  }
+
+  function endDrag(){
+    if(state.dragType === 'pivot'){ state.pivotDragAnchor = null; }
+    state.dragging = false; state.dragType = null;
+  }
+
+  canvas.addEventListener('mousedown', startDrag);
+  canvas.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup', endDrag);
+
+  canvas.addEventListener('touchstart', startDrag, {passive:false});
+  canvas.addEventListener('touchmove', moveDrag, {passive:false});
+  window.addEventListener('touchend', endDrag);
+
+  // ===== Draggable token from header -> drop into canvas to place pivot TOOL =====
+  const tokenDrag = { active:false, ghost:null };
+  function makeGhost(){ const g=document.createElement('div'); g.className='tokenGhost'; document.body.appendChild(g); return g; }
+  function setGhostPos(ghost, e){
+    const client = e.touches ? e.touches[0] : e;
+    ghost.style.left = client.clientX + 'px';
+    ghost.style.top  = client.clientY + 'px';
+  }
+  function onTokenDown(e){
+    e.preventDefault();
+    tokenDrag.active = true;
+    pivotToken.classList.add('dragging');
+    tokenDrag.ghost = makeGhost();
+    setGhostPos(tokenDrag.ghost, e);
+    window.addEventListener('mousemove', onTokenMove);
+    window.addEventListener('mouseup', onTokenUp, {once:true});
+    window.addEventListener('touchmove', onTokenMove, {passive:false});
+    window.addEventListener('touchend', onTokenUp, {once:true});
+  }
+  function onTokenMove(e){
+    if(!tokenDrag.active) return;
+    e.preventDefault();
+    setGhostPos(tokenDrag.ghost, e);
+  }
+  function onTokenUp(e){
+    if(!tokenDrag.active) return;
+    const rect = canvas.getBoundingClientRect();
+    const client = e.changedTouches ? e.changedTouches[0] : e;
+    const cx = client.clientX, cy = client.clientY;
+    if(cx>=rect.left && cx<=rect.right && cy>=rect.top && cy<=rect.bottom){
+      const g = {x:pxToGx(cx - rect.left), y:pxToGy(cy - rect.top)};
+      state.pivot = {x:g.x, y:g.y};   // free placement (float)
+      state.pivotPlaced = true;
+      state.currentAngle = 0;
+      draw();
+    }
+    tokenDrag.active = false;
+    pivotToken.classList.remove('dragging');
+    if(tokenDrag.ghost){ tokenDrag.ghost.remove(); tokenDrag.ghost=null; }
+    window.removeEventListener('mousemove', onTokenMove);
+    window.removeEventListener('touchmove', onTokenMove);
+  }
+  pivotToken.addEventListener('mousedown', onTokenDown);
+  pivotToken.addEventListener('touchstart', onTokenDown, {passive:false});
+
+  // ===== HUD & game flow =====
+  function mmss(sec){
+    if(sec<=0) return "00:00";
+    const m = Math.floor(sec/60), s = sec%60;
+    return String(m).padStart(2,'0') + ":" + String(s).padStart(2,'0');
+  }
+  function updateHUD(){
+    hudScore.textContent = `Score: ${state.score}`;
+    if(state.mode==='target'){
+      hudGoal.style.display = '';
+      hudTime.style.display = 'none';
+      hudGoal.textContent = `Goal: ${state.targetScore}`;
+    }else{
+      hudGoal.style.display = 'none';
+      hudTime.style.display = '';
+      hudTime.textContent = state.timeLimitSec===0 ? 'Time: —' : `Time: ${mmss(state.timeLeftSec)}`;
+    }
+  }
+  function stopTimer(){ if(state.timerId){ clearInterval(state.timerId); state.timerId = null; } }
+  function startTimer(){
+    stopTimer();
+    if(state.mode!=='timed' || state.timeLimitSec===0) return;
+    state.timeLeftSec = state.timeLimitSec;
+    state.timerId = setInterval(()=>{
+      state.timeLeftSec--;
+      updateHUD();
+      if(state.timeLeftSec<=0){
+        stopTimer();
+        bigMessage("TIME'S UP!");
+        setTimeout(()=>endGame('Time\'s up!'), 1200);
+      }
+    }, 1000);
+  }
+
+  function endGame(message){
+    resetBtn.disabled = true; checkBtn.disabled = true; nextBtn.disabled = true; skipBtn.disabled = true; resetPointBtn.disabled = true;
+    menu.style.display = 'flex';
+    const panel = menu.querySelector('.panel');
+    panel.innerHTML = '';
+    const h = document.createElement('h1'); h.textContent = 'Game over';
+    panel.appendChild(h);
+    const summary = document.createElement('div');
+    summary.className = 'card';
+    summary.innerHTML = `<div style="font-weight:700; font-size:18px;">${message}</div>
+                         <div>Final score: <b>${state.score}</b></div>`;
+    panel.appendChild(summary);
+    const footer = document.createElement('div'); footer.className = 'footer';
+    const again = document.createElement('button'); again.textContent = 'Play again';
+    again.addEventListener('click', ()=>{ location.reload(); });
+    footer.appendChild(again);
+    panel.appendChild(footer);
+  }
+
+  // Heuristic for overall overlap variety (used for choosing the shape itself)
+  function shapeAcceptableForOverlap(shape){
+    const c = shapeCentroid(shape);
+    const nominal = {x: Math.round(c.x), y: Math.round(c.y)};
+    const rotated = rotatePolygonAny(shape, nominal, state.targetSweep);
+    const r = overlapAreaRatio(shape, rotated); // 0..1
+    if(state.targetDeg===270){
+      if(Math.random()<0.7) return r >= 0.08 && r <= 0.35;
+      return r <= 0.45;
+    }else{
+      if(Math.random()<0.75) return r <= 0.10;
+      return r <= 0.25;
+    }
+  }
+
+  function newQuestion(){
+    feedback.style.display = 'none';
+    feedback.textContent = '';
+    nextBtn.style.display = 'none';
+    enableInputs(true);
+    state.answeredCorrectly = false;
+
+    // Pick target type with equal mix (90 cw, 90 ccw, 180, 270 cw, 270 ccw)
+    const t = nextType();
+    setTargetAngle(t.deg, t.dir);
+
+    // Generate shape with overlap heuristic
+    let attempts = 0, shp = randomShape();
+    while(attempts < 25){
+      if(shapeAcceptableForOverlap(shp)) break;
+      shp = randomShape(); attempts++;
+    }
+    state.original = shp;
+
+    // Choose REQUIRED pivot (question) — final position in-bounds always.
+    // For 270°: full sweep in-bounds. For 90/180°: only final in-bounds.
+    attempts = 0;
+    while(attempts < 20){
+      if(pickRequiredPivot()) break;
+      state.original = randomShape();
+      attempts++;
+    }
+
+    // Reset tool pivot
+    state.pivotPlaced = false;
+    state.pivot = {x:0, y:0};
+    state.pivotDragAnchor = null;
+    state.currentAngle = 0;
+
+    // Build inputs (# of vertices)
+    buildInputs(state.original.length);
+
+    // Update prompt: show the GIVEN rotation point
+    pivotTargetText.textContent = `(${state.requiredPivot.x}, ${state.requiredPivot.y})`;
+
+    draw();
+  }
+
+  function resetRotation(){
+    state.currentAngle = 0;
+    draw();
+  }
+  function resetPoint(){
+    state.pivotPlaced = false;
+    state.pivot = {x:0,y:0};
+    state.pivotDragAnchor = null;
+    state.currentAngle = 0;
+    draw();
+  }
+
+  // ===== Celebrations & errors =====
+  function bigMessage(text){
+    bigMsg.textContent = text;
+    bigMsg.style.display = 'flex';
+    setTimeout(()=>{ bigMsg.style.display = 'none'; }, 1200);
+  }
+
+  // grayscale confetti
+  function launchConfetti(durationMs=1200, count=180){
+    const ctx = confettiCanvas.getContext('2d');
+    const W = confettiCanvas.width / (window.devicePixelRatio||1);
+    const H = confettiCanvas.height / (window.devicePixelRatio||1);
+    const particles = [];
+    for(let i=0;i<count;i++){
+      particles.push({
+        x: Math.random()*W,
+        y: -10 - Math.random()*H*0.3,
+        r: 2 + Math.random()*3,
+        vy: 80 + Math.random()*160,
+        vx: -40 + Math.random()*80,
+        rot: Math.random()*Math.PI*2,
+        vr: -6+Math.random()*12,
+        gray: Math.random()<0.5 ? 30+Math.floor(Math.random()*80) : 160+Math.floor(Math.random()*80)
+      });
+    }
+    let last = performance.now();
+    let elapsed = 0;
+    confettiCanvas.style.display = 'block';
+    function step(t){
+      const dt = Math.min(50, t-last); last = t; elapsed += dt;
+      ctx.clearRect(0,0,W,H);
+      particles.forEach(p=>{
+        p.y += p.vy*(dt/1000);
+        p.x += p.vx*(dt/1000);
+        p.rot += p.vr*(dt/1000);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = `rgb(${p.gray},${p.gray},${p.gray})`;
+        ctx.fillRect(-p.r, -p.r, 2*p.r, 2*p.r);
+        ctx.restore();
+      });
+      if(elapsed < durationMs){
+        requestAnimationFrame(step);
+      }else{
+        ctx.clearRect(0,0,W,H);
+        confettiCanvas.style.display = 'none';
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function incorrectFlash(){
+    answerBar.classList.add('error');
+    app.classList.add('shake');
+    setTimeout(()=>answerBar.classList.remove('error'), 700);
+    setTimeout(()=>app.classList.remove('shake'), 500);
+  }
+
+  // ===== Checking =====
+  function enableInputs(on){
+    const boxes = [...inputsDiv.querySelectorAll('input')];
+    boxes.forEach(b => b.disabled = !on);
+  }
+
+  function pointsEqual(p, q, eps=1e-2){
+    return Math.abs(p.x - q.x) <= eps && Math.abs(p.y - q.y) <= eps;
+  }
+
+  function checkAnswer(){
+    const exp = expectedPts();
+    const typed = readInputsAllOrNull(exp.length);
+    if(!typed){
+      feedback.className = 'msg';
+      feedback.textContent = `Enter ${exp.length} distinct coordinates like "(3, -2)". Decimals are allowed.`;
+      feedback.style.display = 'inline-block';
+      incorrectFlash();
+      return;
+    }
+    // order-insensitive match with tolerance
+    const used = new Array(exp.length).fill(false);
+    let allMatch = true;
+    for(const t of typed){
+      let hit = false;
+      for(let j=0;j<exp.length;j++){
+        if(used[j]) continue;
+        if(pointsEqual(t, exp[j], 1e-2)){ used[j]=true; hit=true; break; }
+      }
+      if(!hit){ allMatch = false; break; }
+    }
+
+    if(allMatch){
+      feedback.style.display = 'none';
+      state.answeredCorrectly = true;
+      enableInputs(false);
+      nextBtn.style.display = 'inline-block';
+
+      // If a tool pivot is placed, snap preview to target sweep (no clamping)
+      if(state.pivotPlaced){
+        state.currentAngle = state.targetSweep;
+      }
+      draw();
+
+      // Score + celebrate
+      state.score += 1; updateHUD();
+      bigMessage('CORRECT!');
+      launchConfetti();
+
+      if(state.mode==='target' && state.score >= state.targetScore){
+        bigMessage(`GOAL REACHED!`);
+        setTimeout(()=>endGame(`You reached ${state.targetScore} points — well done!`), 1200);
+      }
+    }else{
+      feedback.className = 'msg';
+      feedback.textContent = 'Not quite. Check each coordinate and try again.';
+      feedback.style.display = 'inline-block';
+      incorrectFlash();
+    }
+  }
+
+  // ===== Menu logic (disable time choices unless "timed" is selected) =====
+  function applyModeUI(){
+    const mode = modeRadios.find(r=>r.checked)?.value || 'target';
+    if(mode==='timed'){
+      timeChoices.classList.remove('disabled');
+      timeChoices.setAttribute('aria-disabled','false');
+      // ensure a default selection if none selected
+      if(!timeChoices.querySelector('.pillBtn.sel')){
+        timeChoices.querySelector('.pillBtn[data-min="5"]').classList.add('sel');
+      }
+    }else{
+      // target mode — disable pills and clear selection
+      timeChoices.classList.add('disabled');
+      timeChoices.setAttribute('aria-disabled','true');
+      [...timeChoices.querySelectorAll('.pillBtn')].forEach(b=>b.classList.remove('sel'));
+    }
+  }
+  modeRadios.forEach(r=> r.addEventListener('change', applyModeUI));
+  applyModeUI(); // initial
+
+  // time choice pills (only when enabled)
+  timeChoices.addEventListener('click', (e)=>{
+    if(timeChoices.classList.contains('disabled')) return;
+    const btn = e.target.closest('.pillBtn');
+    if(!btn) return;
+    [...timeChoices.children].forEach(b=>b.classList.remove('sel'));
+    btn.classList.add('sel');
+  });
+
+  startBtn.addEventListener('click', ()=>{
+    const mode = modeRadios.find(r=>r.checked)?.value || 'target';
+    state.mode = mode;
+    if(mode==='target'){
+      const v = Math.max(5, Math.round(Number(targetScoreInput.value)||10));
+      state.targetScore = v;
+      state.timeLimitSec = 0; state.timeLeftSec = 0;
+      hudGoal.style.display = ''; hudTime.style.display = 'none';
+    }else{
+      const sel = timeChoices.querySelector('.pillBtn.sel') || timeChoices.querySelector('.pillBtn[data-min="5"]');
+      const min = Number(sel?.dataset.min || '5');
+      state.timeLimitSec = Math.max(0, Math.round(min*60));
+      state.timeLeftSec = state.timeLimitSec;
+      hudTime.style.display = ''; hudGoal.style.display = 'none';
+    }
+    state.score = 0;
+    initTypeSequence();              // prepare equal-mix schedule
+    updateHUD();
+    closeMenu();
+    newQuestion();
+    startTimer();
+  });
+
+  function openMenu(){
+    stopTimer();
+    menu.style.display = 'flex';
+    resetBtn.disabled = true; checkBtn.disabled = true; nextBtn.disabled = true; skipBtn.disabled = true; resetPointBtn.disabled = true;
+  }
+  function closeMenu(){
+    menu.style.display = 'none';
+    resetBtn.disabled = false; checkBtn.disabled = false; nextBtn.disabled = false; skipBtn.disabled = false; resetPointBtn.disabled = false;
+  }
+  menuBtn.addEventListener('click', openMenu);
+
+  // ===== Actions =====
+  nextBtn.addEventListener('click', ()=>{ enableInputs(true); newQuestion(); });
+  skipBtn.addEventListener('click', ()=>{ enableInputs(true); newQuestion(); }); // no score change
+  resetBtn.addEventListener('click', resetRotation);
+  resetPointBtn.addEventListener('click', resetPoint);
+  checkBtn.addEventListener('click', checkAnswer);
+  document.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter') checkAnswer();
+    if(e.key.toLowerCase()==='r') resetRotation();
+    if(e.key.toLowerCase()==='p') resetPoint();   // quick key to remove pivot tool
+    if(e.key.toLowerCase()==='m') openMenu();
+    if(e.key.toLowerCase()==='s') { enableInputs(true); newQuestion(); } // skip
+  });
+
+  // ===== Boot & resize =====
+  window.addEventListener('resize', resizeCanvasToFit);
+  const observer = new ResizeObserver(resizeCanvasToFit);
+  observer.observe(document.getElementById('app'));
+
+  // show menu on load
+  openMenu();
+})();
+</script>
+</body>
+</html>
